@@ -1,10 +1,11 @@
 from typing import Any, Dict, List, cast
 import pymupdf
 
-def get_doc_handle(pdf_path: str) -> pymupdf.Document:
-    document: pymupdf.Document = pymupdf.open(pdf_path)
-
-    return document
+def get_doc_handle(
+    pdf_path: str | None = None,
+    stream: bytes | None = None
+) -> pymupdf.Document:
+    return pymupdf.open(pdf_path) if pdf_path else pymupdf.open(stream=stream, filetype="pdf")
 
 def parse_paper_to_dict(document: pymupdf.Document) -> List[Dict]:
     page_wise_content: List[Dict] = []
