@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
 import AskPanel from "./components/AskPanel";
+import ExplorePapers from "./components/ExplorePapers";
 import IndexForm from "./components/IndexForm";
 import Library from "./components/Library";
+import PaperModal from "./components/PaperModal";
 import { useIndexPolling } from "./hooks/useIndexPolling";
 import type { PaperPatch } from "./hooks/useIndexPolling";
 import type { Paper } from "./types";
@@ -28,6 +30,7 @@ const STEPS = [
 
 export default function App() {
   const [papers, setPapers] = useState<Paper[]>([]);
+  const [exploredPaper, setExploredPaper] = useState<Paper | null>(null);
 
   const updatePaper = useCallback((paperId: string, patch: PaperPatch) => {
     setPapers((prev) => {
@@ -59,6 +62,8 @@ export default function App() {
     setPapers((prev) => prev.filter((p) => p.paper_id !== paperId));
   }
 
+  const donePapers = papers.filter((p) => p.status === "done");
+
   return (
     <>
       <nav>
@@ -68,6 +73,7 @@ export default function App() {
         </a>
         <div className="nav-links">
           <a href="#add">Add a paper</a>
+          {donePapers.length > 0 && <a href="#explore">Explore</a>}
           {papers.length > 0 && <a href="#ask">Ask</a>}
           <a href="#how">How it works</a>
         </div>
@@ -106,6 +112,10 @@ export default function App() {
         </section>
       </div>
 
+      {donePapers.length > 0 && (
+        <ExplorePapers papers={donePapers} onOpen={setExploredPaper} />
+      )}
+
       {papers.length > 0 && <AskPanel papers={papers} />}
 
       <section className="pipeline" id="how">
@@ -132,6 +142,13 @@ export default function App() {
         <span>Scholar</span>
         <span>Answers are only as good as the papers behind them.</span>
       </footer>
+
+      {exploredPaper && (
+        <PaperModal
+          paper={exploredPaper}
+          onClose={() => setExploredPaper(null)}
+        />
+      )}
     </>
   );
 }
