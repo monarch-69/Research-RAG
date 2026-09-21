@@ -23,9 +23,7 @@ export default function Library({ papers, onDismiss }: Props) {
       <div className="library-head">
         <h3>Your papers</h3>
         {pending > 0 && (
-          <span className="library-note">
-            {pending} indexing
-          </span>
+          <span className="library-note">{pending} indexing</span>
         )}
       </div>
 
@@ -33,11 +31,20 @@ export default function Library({ papers, onDismiss }: Props) {
         {papers.map((p) => (
           <li key={p.paper_id} className="paper">
             <div className="paper-row">
-              <span className="paper-title" title={p.paper_title}>
-                {p.paper_title}
-              </span>
+              <div className="paper-info">
+                <span className="paper-title" title={p.paper_title}>
+                  {p.paper_title}
+                </span>
+                {p.paper_authors && (
+                  <span className="paper-authors" title={p.paper_authors}>
+                    {p.paper_authors}
+                  </span>
+                )}
+              </div>
               <span className={`badge ${p.status}`}>
-                {!isTerminal(p.status) && <span className="pulse" aria-hidden="true" />}
+                {!isTerminal(p.status) && (
+                  <span className="pulse" aria-hidden="true" />
+                )}
                 {p.status === "done" && p.chunks != null
                   ? `${p.chunks} passages`
                   : LABEL[p.status]}

@@ -29,8 +29,6 @@ const STEPS = [
 export default function App() {
   const [papers, setPapers] = useState<Paper[]>([]);
 
-  // Stable identity, and a no-op when nothing actually changed, so that
-  // polling "still processing" doesn't re-render the page every second.
   const updatePaper = useCallback((paperId: string, patch: PaperPatch) => {
     setPapers((prev) => {
       let changed = false;
@@ -61,8 +59,6 @@ export default function App() {
     setPapers((prev) => prev.filter((p) => p.paper_id !== paperId));
   }
 
-  const ready = papers.filter((p) => p.status === "done");
-
   return (
     <>
       <nav>
@@ -72,7 +68,7 @@ export default function App() {
         </a>
         <div className="nav-links">
           <a href="#add">Add a paper</a>
-          {ready.length > 0 && <a href="#ask">Ask</a>}
+          {papers.length > 0 && <a href="#ask">Ask</a>}
           <a href="#how">How it works</a>
         </div>
       </nav>
@@ -110,7 +106,7 @@ export default function App() {
         </section>
       </div>
 
-      {ready.length > 0 && <AskPanel papers={ready} />}
+      {papers.length > 0 && <AskPanel papers={papers} />}
 
       <section className="pipeline" id="how">
         <div className="wrap">
