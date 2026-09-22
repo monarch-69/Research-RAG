@@ -11,10 +11,11 @@ from psycopg_pool import AsyncConnectionPool
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
-
 from vector_store import create_vector_handle
-from utils import Config, load_config
+from utils import Config, SemanticCache, load_config
+
+# Load all the env's
+load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,8 +28,8 @@ async def lifespan(app: FastAPI):
         config.chroma_collection_name,
         config.chroma_persistant_dir
     )
-    app.state.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
-
+    app.state.llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
+    app.state.semantic_cache = SemanticCache(embedding_model=embedding_model, threshold=0.92)
     pg_pool: AsyncConnectionPool = AsyncConnectionPool(
         "postgres://sage:12345@localhost/research_rag",
         max_size=20,
@@ -48,6 +49,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 from routers.research import router as research_router
 app.include_router(research_router)
 
+# A test handler, just to test the system
 @app.get("/")
 def greetings():
     return {

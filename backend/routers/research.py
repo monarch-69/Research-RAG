@@ -2,22 +2,34 @@ from typing import List
 from math import ceil
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Request, HTTPException
 from fastapi.background import BackgroundTasks
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.prebuilt import create_react_agent
 from uuid_utils import uuid7
 import asyncio
+import json
 
 from utils import (
+    SemanticCache,
     logger,
     get_meta_db,
     indexer_bg_worker,
     AskRequest,
     _ASK_SYSTEM,
     _RELEVANT_MARKER,
+    _extract_token,
+    _parse_response,
     make_search_tool,
 )
 
 router: APIRouter = APIRouter(prefix="/research")
+
+# These headers are mandatory for SSE to work through browsers and reverse proxies.
+# Without Cache-Control: no-cache the response body is buffered until the connection
+# closes, so the client sees nothing until the stream ends — appearing "stuck".
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",  # tells nginx not to buffer
+}
 
 
 # ── Upload & index ─────────────────────────────────────────────────────────
@@ -114,7 +126,7 @@ async def get_paper_status(paper_id: str, connection=Depends(get_meta_db)):
     return {"paper_id": paper_id, "status": res[0], "chunks": res[1], "error": None}
 
 
-# ── Ask ─────────────────────────────────────────────────────────────────────
+# ── Ask (SSE streaming + semantic cache) ────────────────────────────────────
 
 @router.post("/ask")
 async def ask_papers(request: Request, body: AskRequest):
@@ -123,63 +135,109 @@ async def ask_papers(request: Request, body: AskRequest):
     if not body.question.strip():
         raise HTTPException(status_code=422, detail="question must not be empty.")
 
-    search_tool, retrieved_docs = make_search_tool(
-        request.app.state.vector_store, body.paper_ids
+    llm = request.app.state.llm
+    vector_store = request.app.state.vector_store
+    cache: SemanticCache = request.app.state.semantic_cache
+    paper_ids_set = frozenset(body.paper_ids)
+
+    # ── Semantic cache check ─────────────────────────────────────────────────
+    # embed_query is a blocking Ollama call; run it off the event loop.
+    cached_answer, cached_sources, question_emb = await asyncio.to_thread(
+        cache.lookup, body.question, paper_ids_set
     )
 
-    agent = create_react_agent(request.app.state.llm, tools=[search_tool])
+    if cached_answer is not None:
+        async def _cached_stream():
+            yield f"event: token\ndata: {json.dumps(cached_answer)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'sources': cached_sources})}\n\n"
+
+        return StreamingResponse(_cached_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    # ── Retrieval ────────────────────────────────────────────────────────────
+    search_tool, retrieved_docs = make_search_tool(vector_store, body.paper_ids)
 
     try:
-        result = await asyncio.to_thread(
-            agent.invoke,
-            {
-                "messages": [
-                    SystemMessage(content=_ASK_SYSTEM),
-                    HumanMessage(content=body.question),
-                ]
-            },
-        )
+        passages: str = await asyncio.to_thread(search_tool.invoke, body.question)
     except Exception:
-        logger.exception("Agent failed for question %r", body.question)
-        raise HTTPException(status_code=500, detail="Agent request failed.")
+        logger.exception("Search tool failed for %r", body.question)
+        raise HTTPException(status_code=500, detail="Vector search failed.")
 
-    # Extract plain text — Gemini returns a list of content blocks; pull the text.
-    raw_content = result["messages"][-1].content
-    if isinstance(raw_content, list):
-        raw_answer = "".join(
-            block["text"]
-            for block in raw_content
-            if isinstance(block, dict) and block.get("type") == "text"
-        ).strip()
-    else:
-        raw_answer = str(raw_content).strip()
+    if not retrieved_docs:
+        no_ctx = "I couldn't find relevant passages in the selected papers for your question."
 
-    # Parse ####RELEVANT#### marker the model appends.
-    # Everything before it is the answer; everything after is the best passage.
-    if _RELEVANT_MARKER in raw_answer:
-        answer_part, relevant_text = raw_answer.split(_RELEVANT_MARKER, 1)
-        clean_answer = answer_part.strip()
-        relevant_text = relevant_text.strip()
+        async def _empty_stream():
+            yield f"event: token\ndata: {json.dumps(no_ctx)}\n\n"
+            yield f"event: done\ndata: {json.dumps({'sources': []})}\n\n"
 
-        # Attribute the passage to the doc with the highest word overlap.
-        source: dict | None = None
-        if retrieved_docs and relevant_text:
-            rel_words = set(relevant_text.lower().split())
-            best_doc = max(
-                retrieved_docs,
-                key=lambda d: len(rel_words & set(d.page_content.lower().split())),
+        return StreamingResponse(_empty_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    # ── Streaming LLM generation ─────────────────────────────────────────────
+    messages = [
+        SystemMessage(content=_ASK_SYSTEM),
+        HumanMessage(
+            content=(
+                f"Context from research papers:\n\n{passages}\n\n"
+                f"---\n\nQuestion: {body.question}"
             )
-            source = {
-                "paper_id": best_doc.metadata.get("id", ""),
-                "paper_name": best_doc.metadata.get("name", "Unknown"),
-                "excerpt": relevant_text[:500],
-                "section": None,
-            }
-        sources = [source] if source else []
-    else:
-        # Fallback: model didn't output the marker — return the answer as-is
-        # with no sources rather than showing raw blobs.
-        clean_answer = raw_answer
-        sources = []
+        ),
+    ]
 
-    return {"answer": clean_answer, "sources": sources}
+    async def _live_stream():
+        full_response = ""
+        pending = ""       # Sliding buffer to suppress the ####RELEVANT#### marker
+        marker_found = False
+        sources_to_send: list = []
+
+        try:
+            # Use a per-chunk timeout so a slow/hung LLM doesn't freeze the UI.
+            aiter = llm.astream(messages).__aiter__()
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(aiter.__anext__(), timeout=60.0)
+                except StopAsyncIteration:
+                    break
+
+                token = _extract_token(chunk)
+                if not token:
+                    continue
+
+                full_response += token
+
+                if marker_found:
+                    continue  # quietly collect the relevant passage
+
+                pending += token
+
+                if _RELEVANT_MARKER in pending:
+                    marker_found = True
+                    before = pending[: pending.index(_RELEVANT_MARKER)]
+                    if before:
+                        yield f"event: token\ndata: {json.dumps(before)}\n\n"
+                    pending = ""
+                    continue
+
+                # Emit the safe prefix (far enough from the tail to not be
+                # the start of the marker).
+                safe_len = len(pending) - len(_RELEVANT_MARKER)
+                if safe_len > 0:
+                    yield f"event: token\ndata: {json.dumps(pending[:safe_len])}\n\n"
+                    pending = pending[safe_len:]
+
+            # Flush any remaining buffer (marker never appeared)
+            if pending and not marker_found:
+                yield f"event: token\ndata: {json.dumps(pending)}\n\n"
+
+            clean_answer, sources_to_send = _parse_response(full_response, retrieved_docs)
+            cache.store(question_emb, paper_ids_set, clean_answer, sources_to_send)
+
+        except asyncio.TimeoutError:
+            logger.warning("LLM timed out (60 s) for %r", body.question)
+            yield f"event: error\ndata: {json.dumps('LLM response timed out — please try again.')}\n\n"
+        except Exception:
+            logger.exception("LLM streaming failed for %r", body.question)
+            yield f"event: error\ndata: {json.dumps('LLM request failed.')}\n\n"
+
+        # Always send done so the client can clear its busy state.
+        yield f"event: done\ndata: {json.dumps({'sources': sources_to_send})}\n\n"
+
+    return StreamingResponse(_live_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)

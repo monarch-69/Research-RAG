@@ -4,6 +4,7 @@ import type {
   IndexFormValues,
   IndexStatusResponse,
   Paper,
+  Source,
 } from "./types";
 
 export const API_BASE: string =
@@ -206,6 +207,71 @@ export async function askQuestion(
   });
   if (!res.ok) throw await readError(res);
   return res.json() as Promise<AskResponse>;
+}
+
+/**
+ * Stream an answer from the server via SSE.
+ *
+ * The server sends:
+ *   event: token   — each text chunk as it is generated
+ *   event: done    — final payload { sources: Source[] }
+ *   event: error   — error message string
+ *
+ * Callbacks fire as events arrive.  The returned promise resolves once the
+ * stream closes (or rejects on a network-level failure).
+ */
+export async function streamAskQuestion(
+  question: string,
+  paperIds: string[],
+  onToken: (text: string) => void,
+  onDone: (sources: Source[]) => void,
+  onError: (message: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(ROUTES.ask, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, paper_ids: paperIds }),
+    signal,
+  });
+  if (!res.ok) throw await readError(res);
+  if (!res.body) throw new ApiError("No response body.", 0);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are delimited by blank lines (\n\n).
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? ""; // Keep any incomplete trailing chunk.
+
+      for (const raw of events) {
+        if (!raw.trim()) continue;
+        let eventType = "message";
+        let data = "";
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) data = line.slice(6);
+        }
+        if (!data) continue;
+
+        const payload = JSON.parse(data) as unknown;
+        if (eventType === "token") onToken(payload as string);
+        else if (eventType === "done")
+          onDone((payload as { sources: Source[] }).sources ?? []);
+        else if (eventType === "error") onError(payload as string);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export function humanSize(bytes: number): string {

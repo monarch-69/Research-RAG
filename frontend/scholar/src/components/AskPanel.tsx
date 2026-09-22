@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { askQuestion } from "../api";
+import { streamAskQuestion } from "../api";
 import type { Paper, Source, Turn } from "../types";
 
 interface Props {
@@ -76,19 +76,50 @@ export default function AskPanel({ papers, initialFocusId }: Props) {
     if (ta) ta.style.height = "auto";
     setBusy(true);
 
+    // Client-side safety net: abort if the server sends nothing for 90 s.
+    // The server has its own 60 s per-chunk LLM timeout, so this only fires
+    // if the server itself hangs (e.g. process frozen or network drop).
+    const abort = new AbortController();
+    const tid = window.setTimeout(() => abort.abort(), 90_000);
+
     try {
-      const res = await askQuestion(q, selectedIds);
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === id ? { ...t, answer: res.answer, sources: res.sources } : t
-        )
+      await streamAskQuestion(
+        q,
+        selectedIds,
+        // onToken: append each chunk — null→"" transition shows the bubble
+        (token) => {
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === id ? { ...t, answer: (t.answer ?? "") + token } : t
+            )
+          );
+        },
+        // onDone: sources arrive after the last token
+        (sources) => {
+          setTurns((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, sources } : t))
+          );
+        },
+        // onError: stream-level error sent by server before done
+        (message) => {
+          setTurns((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, error: message } : t))
+          );
+        },
+        abort.signal,
       );
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      const msg = isAbort
+        ? "Request timed out. Please try again."
+        : err instanceof Error
+        ? err.message
+        : "Something went wrong.";
       setTurns((prev) =>
         prev.map((t) => (t.id === id ? { ...t, error: msg } : t))
       );
     } finally {
+      window.clearTimeout(tid);
       setBusy(false);
     }
   }
@@ -246,7 +277,7 @@ export default function AskPanel({ papers, initialFocusId }: Props) {
                         </div>
                       ) : (
                         <div className="chat-ai-bubble">
-                          <p className="chat-ai-text">{turn.answer}</p>
+                          <p className={`chat-ai-text${busy && turn.id === turns[turns.length - 1]?.id ? " streaming" : ""}`}>{turn.answer}</p>
                           {turn.sources.length > 0 && (
                             <div className="chat-sources">
                               <p className="chat-sources-label">

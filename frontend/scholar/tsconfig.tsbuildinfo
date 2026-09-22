@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/components/AskPanel.tsx","./src/components/ExplorePapers.tsx","./src/components/IndexForm.tsx","./src/components/Library.tsx","./src/components/PdfGlyph.tsx","./src/hooks/useIndexPolling.ts"],"version":"5.9.3"}

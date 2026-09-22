@@ -13,3 +13,6 @@ dist
 .env
 *.local
 .DS_Store
+
+*/rag-store
+*/*/chroma
