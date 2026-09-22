@@ -6,7 +6,7 @@ interface Props {
   onAskPaper: (paperId: string) => void;
 }
 
-export default function PapersIndexed({ papers, onAskAll, onAskPaper }: Props) {
+export default function ExplorePapers({ papers, onAskAll, onAskPaper }: Props) {
   if (papers.length === 0) return null;
 
   return (
@@ -14,7 +14,7 @@ export default function PapersIndexed({ papers, onAskAll, onAskPaper }: Props) {
       <div className="wrap">
         <div className="pi-header">
           <div>
-            <h2 className="pi-heading">Papers Indexed</h2>
+            <h2 className="pi-heading">Explore Papers</h2>
             <p className="pi-lede">
               {papers.length} paper{papers.length === 1 ? "" : "s"} ready to
               interrogate. Pick one below or search across your entire library.

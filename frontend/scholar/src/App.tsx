@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import AskPanel from "./components/AskPanel";
+import ExplorePapers from "./components/ExplorePapers";
 import IndexForm from "./components/IndexForm";
 import Library from "./components/Library";
-import PapersIndexed from "./components/PapersIndexed";
+import { getAllPapers } from "./api";
 import { useIndexPolling } from "./hooks/useIndexPolling";
 import type { PaperPatch } from "./hooks/useIndexPolling";
 import type { Paper } from "./types";
@@ -52,6 +53,18 @@ export default function App() {
       });
       return changed ? next : prev;
     });
+  }, []);
+
+  // Fetch all existing papers from the server once on mount so the Explore
+  // section is pre-populated even before the user uploads anything this session.
+  useEffect(() => {
+    const controller = new AbortController();
+    getAllPapers(controller.signal)
+      .then((serverPapers) => {
+        if (serverPapers.length > 0) setPapers(serverPapers);
+      })
+      .catch(() => {}); // server may be unavailable; silently ignore
+    return () => controller.abort();
   }, []);
 
   useIndexPolling(papers, updatePaper);
@@ -208,7 +221,7 @@ export default function App() {
       </div>
 
       {donePapers.length > 0 && (
-        <PapersIndexed
+        <ExplorePapers
           papers={donePapers}
           onAskAll={() => openAsk()}
           onAskPaper={(id) => openAsk(id)}

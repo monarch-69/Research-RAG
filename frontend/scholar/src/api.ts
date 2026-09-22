@@ -3,6 +3,7 @@ import type {
   IndexAccepted,
   IndexFormValues,
   IndexStatusResponse,
+  Paper,
 } from "./types";
 
 export const API_BASE: string =
@@ -13,19 +14,12 @@ export const ROUTES = {
   /** POST, multipart. Responds 202 with { paper_id, status }. */
   index: `${API_BASE}/research/index`,
 
-  /**
-   * GET. Polled with the paper_id returned by the 202 above.
-   *
-   * Path-parameter style — matches  @router.get("/index/{paper_id}/status")
-   */
+  /** GET. Returns all papers stored in the DB (all statuses). */
+  papers: `${API_BASE}/research/papers`,
+
+  /** GET. Polled with the paper_id returned by the 202 above. */
   status: (paperId: string) =>
     `${API_BASE}/research/${encodeURIComponent(paperId)}/status`,
-
-  // Query-parameter style — use this instead if your route is
-  //   @router.get("/index/status")  with  paper_id: str  as a parameter:
-  //
-  // status: (paperId: string) =>
-  //   `${API_BASE}/research/index/status?paper_id=${encodeURIComponent(paperId)}`,
 
   /** POST, JSON { question, paper_ids }. */
   ask: `${API_BASE}/research/ask`,
@@ -166,6 +160,39 @@ export async function getIndexStatus(
   const res = await fetch(ROUTES.status(paperId), { signal });
   if (!res.ok) throw await readError(res);
   return res.json() as Promise<IndexStatusResponse>;
+}
+
+/** Shape of each element in the GET /research/papers response. */
+interface ServerPaper {
+  paper_id: string;
+  paper_title: string;
+  paper_authors?: string | null;
+  paper_summary?: string | null;
+  status: Paper["status"];
+  chunks?: number | null;
+}
+
+/**
+ * Fetch all papers stored in the DB and map them to the frontend Paper type.
+ * Called once on page load so the Explore section is pre-populated.
+ */
+export async function getAllPapers(signal?: AbortSignal): Promise<Paper[]> {
+  const res = await fetch(ROUTES.papers, { signal });
+  if (!res.ok) throw await readError(res);
+  const list = (await res.json()) as ServerPaper[];
+  return list.map((p) => ({
+    paper_id: p.paper_id,
+    paper_title: p.paper_title,
+    paper_authors: p.paper_authors ?? undefined,
+    paper_summary: p.paper_summary ?? undefined,
+    status: p.status,
+    chunks: p.chunks ?? undefined,
+    error: undefined,
+    // Papers from the server are either terminal (done/failed) or stuck from
+    // a previous run. Setting submitted_at to 0 means the polling hook will
+    // immediately flag any still-processing paper as failed (overdue check).
+    submitted_at: 0,
+  }));
 }
 
 export async function askQuestion(
