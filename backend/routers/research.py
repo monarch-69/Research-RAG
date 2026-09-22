@@ -13,6 +13,7 @@ from utils import (
     indexer_bg_worker,
     AskRequest,
     _ASK_SYSTEM,
+    _RELEVANT_MARKER,
     make_search_tool,
 )
 
@@ -138,25 +139,47 @@ async def ask_papers(request: Request, body: AskRequest):
                 ]
             },
         )
-        answer: str = str(result["messages"][-1].content)
     except Exception:
         logger.exception("Agent failed for question %r", body.question)
         raise HTTPException(status_code=500, detail="Agent request failed.")
 
-    # Build deduplicated source list from everything the tool retrieved.
-    sources = []
-    seen: set[tuple[str, str]] = set()
-    for doc in retrieved_docs:
-        pid = doc.metadata.get("id", "")
-        excerpt = doc.page_content.strip()[:500]
-        key = (pid, excerpt[:80])
-        if key not in seen:
-            seen.add(key)
-            sources.append({
-                "paper_id": pid,
-                "paper_name": doc.metadata.get("name", "Unknown"),
-                "excerpt": excerpt,
-                "section": None,
-            })
+    # Extract plain text — Gemini returns a list of content blocks; pull the text.
+    raw_content = result["messages"][-1].content
+    if isinstance(raw_content, list):
+        raw_answer = "".join(
+            block["text"]
+            for block in raw_content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+    else:
+        raw_answer = str(raw_content).strip()
 
-    return {"answer": answer, "sources": sources}
+    # Parse ####RELEVANT#### marker the model appends.
+    # Everything before it is the answer; everything after is the best passage.
+    if _RELEVANT_MARKER in raw_answer:
+        answer_part, relevant_text = raw_answer.split(_RELEVANT_MARKER, 1)
+        clean_answer = answer_part.strip()
+        relevant_text = relevant_text.strip()
+
+        # Attribute the passage to the doc with the highest word overlap.
+        source: dict | None = None
+        if retrieved_docs and relevant_text:
+            rel_words = set(relevant_text.lower().split())
+            best_doc = max(
+                retrieved_docs,
+                key=lambda d: len(rel_words & set(d.page_content.lower().split())),
+            )
+            source = {
+                "paper_id": best_doc.metadata.get("id", ""),
+                "paper_name": best_doc.metadata.get("name", "Unknown"),
+                "excerpt": relevant_text[:500],
+                "section": None,
+            }
+        sources = [source] if source else []
+    else:
+        # Fallback: model didn't output the marker — return the answer as-is
+        # with no sources rather than showing raw blobs.
+        clean_answer = raw_answer
+        sources = []
+
+    return {"answer": clean_answer, "sources": sources}

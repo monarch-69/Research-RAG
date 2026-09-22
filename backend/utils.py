@@ -33,8 +33,13 @@ _ASK_SYSTEM = (
     "After retrieving passages, answer using ONLY the retrieved information. "
     "If the tool returns no relevant passages, say: "
     "'I couldn't find that information in the selected papers.' "
-    "Be concise."
+    "Be concise. "
+    "At the very end of your response, on its own line, write exactly:\n"
+    "####RELEVANT####\n"
+    "then copy the single most relevant passage verbatim from the search results."
 )
+
+_RELEVANT_MARKER = "####RELEVANT####"
 
 
 def load_config(
