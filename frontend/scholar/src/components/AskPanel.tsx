@@ -5,6 +5,7 @@ import type { Paper, Source, Turn } from "../types";
 
 interface Props {
   papers: Paper[];
+  initialFocusId?: string;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -14,8 +15,15 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
 };
 
-export default function AskPanel({ papers }: Props) {
-  const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
+export default function AskPanel({ papers, initialFocusId }: Props) {
+  const [excluded, setExcluded] = useState<Set<string>>(() => {
+    if (!initialFocusId) return new Set<string>();
+    return new Set(
+      papers
+        .filter((p) => p.status === "done" && p.paper_id !== initialFocusId)
+        .map((p) => p.paper_id),
+    );
+  });
   const [question, setQuestion] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);

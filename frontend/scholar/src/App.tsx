@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import AskPanel from "./components/AskPanel";
-import ExplorePapers from "./components/ExplorePapers";
 import IndexForm from "./components/IndexForm";
 import Library from "./components/Library";
-import PaperModal from "./components/PaperModal";
+import PapersIndexed from "./components/PapersIndexed";
 import { useIndexPolling } from "./hooks/useIndexPolling";
 import type { PaperPatch } from "./hooks/useIndexPolling";
 import type { Paper } from "./types";
 import "./styles.css";
+
+type View = "home" | "ask";
 
 const STEPS = [
   {
@@ -30,7 +31,8 @@ const STEPS = [
 
 export default function App() {
   const [papers, setPapers] = useState<Paper[]>([]);
-  const [exploredPaper, setExploredPaper] = useState<Paper | null>(null);
+  const [view, setView] = useState<View>("home");
+  const [askFocusId, setAskFocusId] = useState<string | undefined>();
 
   const updatePaper = useCallback((paperId: string, patch: PaperPatch) => {
     setPapers((prev) => {
@@ -62,10 +64,64 @@ export default function App() {
     setPapers((prev) => prev.filter((p) => p.paper_id !== paperId));
   }
 
+  function openAsk(paperId?: string) {
+    setAskFocusId(paperId);
+    setView("ask");
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }
+
+  function goHome() {
+    setView("home");
+    setAskFocusId(undefined);
+  }
+
   const donePapers = papers.filter((p) => p.status === "done");
 
+  /* ── Ask page ── */
+  if (view === "ask") {
+    return (
+      <div className="ask-page">
+        <header className="ask-page-header">
+          <div className="aph-left">
+            <button className="aph-back" onClick={goHome} type="button">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M13 8H3M7 12l-4-4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Papers
+            </button>
+            <span className="aph-sep" aria-hidden="true" />
+            <span className="aph-title">Ask your library</span>
+          </div>
+          {donePapers.length > 0 && (
+            <span className="aph-count">
+              {donePapers.length} paper{donePapers.length === 1 ? "" : "s"}{" "}
+              indexed
+            </span>
+          )}
+        </header>
+
+        <div className="ask-page-body">
+          <AskPanel papers={papers} initialFocusId={askFocusId} />
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Home page ── */
   return (
-    <>
+    <div className="home-page">
       <nav>
         <a className="brand" href="#add">
           <span className="mark" />
@@ -73,8 +129,16 @@ export default function App() {
         </a>
         <div className="nav-links">
           <a href="#add">Add a paper</a>
-          {donePapers.length > 0 && <a href="#explore">Explore</a>}
-          {papers.length > 0 && <a href="#ask">Ask</a>}
+          {donePapers.length > 0 && <a href="#papers">Papers</a>}
+          {donePapers.length > 0 && (
+            <button
+              className="nav-ask-btn"
+              type="button"
+              onClick={() => openAsk()}
+            >
+              Ask
+            </button>
+          )}
           <a href="#how">How it works</a>
         </div>
       </nav>
@@ -106,6 +170,37 @@ export default function App() {
             </div>
 
             <Library papers={papers} onDismiss={onDismiss} />
+
+            {donePapers.length > 0 && (
+              <div className="hero-ask-row">
+                <button
+                  className="hero-ask-cta"
+                  type="button"
+                  onClick={() => openAsk()}
+                >
+                  Start asking questions
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M3 8h10M9 4l4 4-4 4"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                <span className="hero-ask-note">
+                  {donePapers.length} paper{donePapers.length === 1 ? "" : "s"}{" "}
+                  ready
+                </span>
+              </div>
+            )}
           </div>
 
           <IndexForm onAccepted={onAccepted} />
@@ -113,10 +208,12 @@ export default function App() {
       </div>
 
       {donePapers.length > 0 && (
-        <ExplorePapers papers={donePapers} onOpen={setExploredPaper} />
+        <PapersIndexed
+          papers={donePapers}
+          onAskAll={() => openAsk()}
+          onAskPaper={(id) => openAsk(id)}
+        />
       )}
-
-      {papers.length > 0 && <AskPanel papers={papers} />}
 
       <section className="pipeline" id="how">
         <div className="wrap">
@@ -142,13 +239,6 @@ export default function App() {
         <span>Scholar</span>
         <span>Answers are only as good as the papers behind them.</span>
       </footer>
-
-      {exploredPaper && (
-        <PaperModal
-          paper={exploredPaper}
-          onClose={() => setExploredPaper(null)}
-        />
-      )}
-    </>
+    </div>
   );
 }
