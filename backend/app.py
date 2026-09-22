@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     app.state.llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
     app.state.semantic_cache = SemanticCache(embedding_model=embedding_model, threshold=0.92)
     pg_pool: AsyncConnectionPool = AsyncConnectionPool(
-        "postgres://sage:12345@localhost/research_rag",
+        "...", # postgres connection string
         max_size=20,
         timeout=5,
         open=False
