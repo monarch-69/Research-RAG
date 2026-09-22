@@ -24,14 +24,13 @@ A web app for uploading research papers (PDFs) and asking questions about their 
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+
 - [Ollama](https://ollama.com) running locally with `mxbai-embed-large` pulled
 - PostgreSQL running locally
 - A Google AI API key from [aistudio.google.com](https://aistudio.google.com)
 
 ## Setup
 
-### 1 — PostgreSQL
+### 1 - PostgreSQL
 
 Create the database and table:
 
@@ -59,7 +58,7 @@ postgres://sage:12345@localhost/research_rag
 
 Change it there if your PostgreSQL user, password, or database name differs.
 
-### 2 — Ollama
+### 2 - Ollama
 
 ```bash
 ollama pull mxbai-embed-large
@@ -67,7 +66,7 @@ ollama pull mxbai-embed-large
 
 Ollama must be running (`ollama serve`) before the backend starts.
 
-### 3 — Backend
+### 3 - Backend
 
 ```bash
 cd backend
@@ -95,7 +94,7 @@ uvicorn app:app --reload
 
 API runs at `http://localhost:8000`.
 
-### 4 — Frontend
+### 4 - Frontend
 
 ```bash
 cd frontend/scholar
