@@ -3,7 +3,11 @@ from math import ceil
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Request, HTTPException
 from fastapi.background import BackgroundTasks
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 from psycopg_pool import AsyncConnectionPool
+from pydantic import BaseModel
 from uuid_utils import uuid7, UUID
 from vector_store import build_index
 from pathlib import Path
@@ -122,3 +126,95 @@ async def get_paper_status(
         "chunks": res[1],
         "error": None,
     }
+
+
+# ── Ask ────────────────────────────────────────────────────────────────────
+
+class AskRequest(BaseModel):
+    question: str
+    paper_ids: List[str]
+
+
+_ASK_SYSTEM = (
+    "You are a precise research assistant. "
+    "Answer the question using ONLY the context passages provided. "
+    "If the answer is not present in the passages, reply: "
+    "'I couldn't find that information in the selected papers.' "
+    "Be concise. Do not draw on outside knowledge."
+)
+
+
+@router.post("/ask")
+async def ask_papers(request: Request, body: AskRequest):
+    if not body.paper_ids:
+        raise HTTPException(status_code=422, detail="paper_ids must not be empty")
+    if not body.question.strip():
+        raise HTTPException(status_code=422, detail="question must not be empty")
+
+    vector_store = request.app.state.vector_store
+    llm: ChatGoogleGenerativeAI = request.app.state.llm
+
+    # Filter chunks to only the requested papers.
+    chroma_filter = (
+        {"id": body.paper_ids[0]}
+        if len(body.paper_ids) == 1
+        else {"id": {"$in": body.paper_ids}}
+    )
+
+    try:
+        docs: List[Document] = await asyncio.to_thread(
+            vector_store.similarity_search,
+            body.question,
+            k=6,
+            filter=chroma_filter,
+        )
+    except Exception:
+        logger.exception("Similarity search failed for question %r", body.question)
+        raise HTTPException(status_code=500, detail="Vector search failed.")
+
+    if not docs:
+        return {
+            "answer": "I couldn't find relevant passages in the selected papers for your question.",
+            "sources": [],
+        }
+
+    # Build context string for the prompt.
+    context_parts = [
+        f"[Passage {i + 1} – {doc.metadata.get('name', 'Unknown')}]\n{doc.page_content}"
+        for i, doc in enumerate(docs)
+    ]
+    context = "\n\n---\n\n".join(context_parts)
+
+    user_message = (
+        f"Context from research papers:\n\n{context}\n\n"
+        f"---\n\nQuestion: {body.question}\n\n"
+        "Answer based solely on the context above:"
+    )
+
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content=_ASK_SYSTEM),
+            HumanMessage(content=user_message),
+        ])
+        answer: str = str(response.content)
+    except Exception:
+        logger.exception("LLM call failed for question %r", body.question)
+        raise HTTPException(status_code=500, detail="LLM request failed.")
+
+    # Deduplicate sources by (paper_id, first 80 chars of excerpt).
+    sources = []
+    seen: set[tuple[str, str]] = set()
+    for doc in docs:
+        pid = doc.metadata.get("id", "")
+        excerpt = doc.page_content.strip()[:500]
+        key = (pid, excerpt[:80])
+        if key not in seen:
+            seen.add(key)
+            sources.append({
+                "paper_id": pid,
+                "paper_name": doc.metadata.get("name", "Unknown"),
+                "excerpt": excerpt,
+                "section": None,
+            })
+
+    return {"answer": answer, "sources": sources}

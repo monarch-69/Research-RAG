@@ -2,13 +2,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from langchain_chroma import Chroma
 from langchain_core.vectorstores import VectorStore
 from langchain_core.embeddings import Embeddings
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import OllamaEmbeddings
 from psycopg_pool import AsyncConnectionPool
+from dotenv import load_dotenv
 import os
+
+load_dotenv()
 
 from vector_store import create_vector_handle
 from utils import Config, load_config
@@ -24,8 +27,8 @@ async def lifespan(app: FastAPI):
         config.chroma_collection_name,
         config.chroma_persistant_dir
     )
-    # Now time to initialize meta-database (cool name for our postgres database)
-    # This would hold our metadata (id of the pdf, name, short summary of this pdf, etc (If I could think of more))
+    app.state.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+
     pg_pool: AsyncConnectionPool = AsyncConnectionPool(
         "postgres://sage:12345@localhost/research_rag",
         max_size=20,
@@ -36,7 +39,7 @@ async def lifespan(app: FastAPI):
     app.state.meta_db = pg_pool
 
     yield
-    
+
     await app.state.meta_db.close()
 
 app: FastAPI = FastAPI(lifespan=lifespan)
